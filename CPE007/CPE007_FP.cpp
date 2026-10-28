@@ -3,92 +3,296 @@
 #include <fstream>
 #include <vector>
 #include <ctime>
-
+#include <cctype>
 using namespace std;
 
-// Data Structures
-
-struct printingEvent {
-    double printingHours;
-    double relativeHumidity;
-    double gramsUsed;
+struct PrintingEvent {
+    double printingHours = 0;
+    double relativeHumidity = 0;
+    double gramsUsed = 0;
     string dateTime;
-    double exposure;
+    double exposure = 0;
 };
 
 struct Filament {
     string name;
     string type;
-    double weight;
+    double weight = 0;
     string dateOpened;
-
-    vector<printingEvent> events;
+    vector<PrintingEvent> events;
 };
 
-// Date and Time
+// Date and Time Functiosn
 
+string twoDigits(int number) {
+    if (number < 10) {
+        return "0" + to_string(number);
+    }
+    return to_string(number);
+}
 string getCurrentDateTime() {
     time_t now = time(0);
-    string dateTime = ctime(&now);
+    tm* local = localtime(&now);
 
-    if (dateTime.length() > 0) {
-        dateTime.erase(dateTime.length() - 1);
+    if (local == nullptr) {
+        return "Unknown date/time";
     }
+
+    string dateTime = to_string(local->tm_year + 1900) + "-";
+    dateTime += twoDigits(local->tm_mon + 1) + "-";
+    dateTime += twoDigits(local->tm_mday) + " ";
+    dateTime += twoDigits(local->tm_hour) + ":";
+    dateTime += twoDigits(local->tm_min) + ":";
+    dateTime += twoDigits(local->tm_sec);
 
     return dateTime;
 }
+string getCurrentDate() {
+    time_t now = time(0);
+    tm* local = localtime(&now);
 
-// Auto Input Functions
+    if (local == nullptr) {
+        return "Unknown date";
+    }
 
-string strInput() {
+    string date = to_string(local->tm_year + 1900) + "-";
+    date += twoDigits(local->tm_mon + 1) + "-";
+    date += twoDigits(local->tm_mday);
+
+    return date;
+}
+
+// Input Functions
+
+string strInput(const string& message) {
+    cout << message;
     string input;
     getline(cin, input);
     return input;
 }
 
-int intInput(string message) {
+int intInput(const string& message) {
     int number;
-
     cout << message;
-
     while (!(cin >> number)) {
         cout << "Invalid input. Enter a whole number: ";
-        cin.clear();
-        cin.ignore(10000, '\n');
-    }
 
-    cin.ignore(10000, '\n');
+        cin.clear();
+        cin.ignore(9999, '\n');
+    }
+    cin.ignore(99999, '\n');
     return number;
 }
 
-double doubleInput(string message) {
+double doubleInput(const string& message) {
     double number;
 
     cout << message;
 
     while (!(cin >> number) || number < 0) {
         cout << "Invalid input. Enter a number that is zero or higher: ";
+
         cin.clear();
-        cin.ignore(10000, '\n');
+        cin.ignore(99999, '\n');
     }
 
-    cin.ignore(10000, '\n');
+    cin.ignore(99999, '\n');
+
     return number;
 }
 
-// Risk Calculation
-// Out in the open to adjust easier
+// Date Validation Functions
+int readNumber(const string& text, int start, int length) {
+    int number = 0;
+
+    for (int i = start; i < start + length; i++) {
+        if (i >= static_cast<int>(text.length())) {
+            return -1;
+        }
+
+        if (!isdigit(text[i])) {
+            return -1;
+        }
+
+        number = number * 10 + (text[i] - '0');
+    }
+
+    return number;
+}
+
+bool isLeapYear(int year) {
+    if (year % 400 == 0) {
+        return true;
+    }
+
+    if (year % 100 == 0) {
+        return false;
+    }
+
+    return year % 4 == 0;
+}
+
+bool parseDate(const string& input, tm& result) {
+    if (input.length() != 10) {
+        return false;
+    }
+
+    if (input[4] != '-' || input[7] != '-') {
+        return false;
+    }
+
+    int year = readNumber(input, 0, 4);
+    int month = readNumber(input, 5, 2);
+    int day = readNumber(input, 8, 2);
+
+    if (year < 1900 || month < 1 || month > 12) {
+        return false;
+    }
+
+    if (day < 1) {
+        return false;
+    }
+
+    int daysInMonth[] = {
+        31, 28, 31, 30, 31, 30,
+        31, 31, 30, 31, 30, 31
+    };
+
+    if (isLeapYear(year)) {
+        daysInMonth[1] = 29;
+    }
+
+    if (day > daysInMonth[month - 1]) {
+        return false;
+    }
+
+    result = {};
+
+    result.tm_year = year - 1900;
+    result.tm_mon = month - 1;
+    result.tm_mday = day;
+    result.tm_hour = 0;
+    result.tm_min = 0;
+    result.tm_sec = 0;
+    result.tm_isdst = -1;
+
+    return true;
+}
+
+double daysSinceOpened(const string& dateOpened) {
+    tm opened = {};
+
+    if (!parseDate(dateOpened, opened)) {
+        return -1;
+    }
+
+    time_t openedTime = mktime(&opened);
+    time_t nowTime = time(0);
+
+    if (openedTime == static_cast<time_t>(-1)) {
+        return -1;
+    }
+
+    if (nowTime < openedTime) {
+        return -1;
+    }
+
+    double seconds = difftime(nowTime, openedTime);
+
+    return seconds / (60.0 * 60.0 * 24.0);
+}
+
+// Moisture-Risk Calculations
+
+string toLowerString(string type) {
+    for (size_t i = 0; i < type.length(); i++) {
+        type[i] = tolower(static_cast<unsigned char>(type[i]));
+    }
+    return type;
+}
+
+double getRiskThresholdDays(const string& type) {
+    string material = toLowerString(type);
+
+    if (material.find("petg") != string::npos) {
+        return 7.0;
+    }
+    if (material.find("tpu") != string::npos) {
+        return 14.0;
+    }
+    if (material.find("pla") != string::npos) {
+        return 30.0;
+    }
+    return 30.0;
+}
 
 double calculateExposure(double printingHours, double relativeHumidity) {
     return printingHours * (relativeHumidity / 100.0);
 }
 
-// File Handling Functions
+double totalExposure(const Filament& filament) {
+    double total = 0;
 
-// All filament information and printing events are saved in one text file.
-// Each piece of information is written on its own line.
+    for (size_t i = 0; i < filament.events.size(); i++) {
+        total += filament.events[i].exposure;
+    }
+    return total;
+}
 
-bool saveData(vector<Filament>& filaments) {
+double moistureRiskPercent(const Filament& filament) {
+    double daysOpen = daysSinceOpened(filament.dateOpened);
+    if (daysOpen < 0) {
+        return -1;
+    }
+    double exposureDays = totalExposure(filament) / 24.0;
+    double estimatedDays = daysOpen + exposureDays;
+    double threshold = getRiskThresholdDays(filament.type);
+    double risk = (estimatedDays / threshold) * 100.0;
+
+    if (risk < 0) {
+        risk = 0;
+    }
+
+    if (risk > 100) {
+        risk = 100;
+    }
+
+    return risk;
+}
+
+string riskLabel(double risk) {
+    if (risk < 0) {
+        return "Unable to Estimate, Verify Date";
+    }
+    if (risk >= 100) {
+        return "HIGH: drying is recommended";
+    }
+    if (risk >= 70) {
+        return "ELEVATED: May result in minor defects";
+    }
+    return "LOW: Safe for printing";
+}
+
+void displayRiskWarning(const Filament& filament) {
+    double risk = moistureRiskPercent(filament);
+    cout << "\nMoisture risk estimate: " << riskLabel(risk);
+
+    if (risk >= 0) {
+        cout << " (" << risk << "%)";
+    }
+
+    cout << '\n';
+
+    if (risk >= 100) {
+        cout << "WARNING: This filament has reached its estimated "
+             << "moisture-risk threshold.\n";
+        cout << "Consider drying it before your next print.\n";
+    }
+}
+
+// File Storage Functions
+
+bool saveData(const vector<Filament>& filaments) {
     ofstream file("filament_data.txt");
 
     if (!file.is_open()) {
@@ -96,25 +300,33 @@ bool saveData(vector<Filament>& filaments) {
         return false;
     }
 
-    file << filaments.size() << endl;
+    file << filaments.size() << '\n';
 
-    for (int i = 0; i < filaments.size(); i++) {
-        file << filaments[i].name << endl;
-        file << filaments[i].type << endl;
-        file << filaments[i].weight << endl;
-        file << filaments[i].dateOpened << endl;
-        file << filaments[i].events.size() << endl;
+    for (size_t i = 0; i < filaments.size(); i++) {
+        const Filament& filament = filaments[i];
 
-        for (int j = 0; j < filaments[i].events.size(); j++) {
-            file << filaments[i].events[j].printingHours << endl;
-            file << filaments[i].events[j].relativeHumidity << endl;
-            file << filaments[i].events[j].gramsUsed << endl;
-            file << filaments[i].events[j].dateTime << endl;
-            file << filaments[i].events[j].exposure << endl;
+        file << filament.name << '\n';
+        file << filament.type << '\n';
+        file << filament.weight << '\n';
+        file << filament.dateOpened << '\n';
+        file << filament.events.size() << '\n';
+
+        for (size_t j = 0; j < filament.events.size(); j++) {
+            const PrintingEvent& event = filament.events[j];
+
+            file << event.printingHours << '\n';
+            file << event.relativeHumidity << '\n';
+            file << event.gramsUsed << '\n';
+            file << event.dateTime << '\n';
+            file << event.exposure << '\n';
         }
     }
 
-    file.close();
+    if (!file) {
+        cout << "Error: A problem occurred while saving the data.\n";
+        return false;
+    }
+
     return true;
 }
 
@@ -125,47 +337,80 @@ bool loadData(vector<Filament>& filaments) {
         ofstream newFile("filament_data.txt");
 
         if (!newFile.is_open()) {
-            cout << "Error: Could not create the data file.\n";
+            cout << "Error: Could not create the data file\n";
             return false;
         }
 
-        newFile << 0 << endl;
-        newFile.close();
+        newFile << 0 << '\n';
+        cout << "New inventory file created.\n";
         return true;
     }
 
-    int filamentCount;
-    file >> filamentCount;
+    int filamentCount = 0;
+
+    if (!(file >> filamentCount) || filamentCount < 0) {
+        cout << "Error: The inventory file is damaged or invalid.\n";
+        return false;
+    }
     file.ignore(10000, '\n');
 
     for (int i = 0; i < filamentCount; i++) {
         Filament filament;
-        int eventCount;
+        int eventCount = 0;
 
-        getline(file, filament.name);
-        getline(file, filament.type);
-        file >> filament.weight;
+        if (!getline(file, filament.name)) {
+            cout << "Error: Could not read filament name.\n";
+            return false;
+        }
+        if (!getline(file, filament.type)) {
+            cout << "Error: Could not read filament type.\n";
+            return false;
+        }
+        if (!(file >> filament.weight) || filament.weight < 0) {
+            cout << "Error: Invalid filament weight in data file.\n";
+            return false;
+        }
         file.ignore(10000, '\n');
-        getline(file, filament.dateOpened);
-
-        file >> eventCount;
+        if (!getline(file, filament.dateOpened)) {
+            cout << "Error: Could not read filament opening date.\n";
+            return false;
+        }
+        if (!(file >> eventCount) || eventCount < 0) {
+            cout << "Error: Invalid printing event count.\n";
+            return false;
+        }
         file.ignore(10000, '\n');
-
         for (int j = 0; j < eventCount; j++) {
-            printingEvent event;
+            PrintingEvent event;
 
-            file >> event.printingHours;
+            if (!(file >> event.printingHours) ||
+                event.printingHours < 0) {
+                cout << "Error: Invalid printing hours in data file.\n";
+                return false;
+            }
+            file.ignore(10000, '\n');
+            if (!(file >> event.relativeHumidity) ||
+                event.relativeHumidity < 0 ||
+                event.relativeHumidity > 100) {
+                cout << "Error: Invalid humidity in data file.\n";
+                return false;
+            }
             file.ignore(10000, '\n');
 
-            file >> event.relativeHumidity;
+            if (!(file >> event.gramsUsed) || event.gramsUsed < 0) {
+                cout << "Error: Invalid grams used in data file.\n";
+                return false;
+            }
             file.ignore(10000, '\n');
 
-            file >> event.gramsUsed;
-            file.ignore(10000, '\n');
-
-            getline(file, event.dateTime);
-
-            file >> event.exposure;
+            if (!getline(file, event.dateTime)) {
+                cout << "Error: Could not read event date/time.\n";
+                return false;
+            }
+            if (!(file >> event.exposure) || event.exposure < 0) {
+                cout << "Error: Invalid exposure score in data file.\n";
+                return false;
+            }
             file.ignore(10000, '\n');
 
             filament.events.push_back(event);
@@ -174,173 +419,224 @@ bool loadData(vector<Filament>& filaments) {
         filaments.push_back(filament);
     }
 
-    file.close();
+    cout << "Inventory loaded successfully.\n";
+
     return true;
 }
 
-// Filament Display Functions
+// Inventory functions
 
-bool displayFilaments(vector<Filament>& filaments) {
-    if (filaments.size() == 0) {
+bool displayFilaments(const vector<Filament>& filaments) {
+    if (filaments.empty()) {
         cout << "\nNo filaments in the inventory.\n";
         return false;
     }
 
-    cout << "\n--- AVAILABLE FILAMENTS ---\n";
+    cout << "\n----> FILAMENT INVENTORY\n";
 
-    for (int i = 0; i < filaments.size(); i++) {
-        cout << i + 1 << ". "
-             << filaments[i].name
-             << " (" << filaments[i].type << ")"
-             << " - Weight: " << filaments[i].weight << " g\n";
+    for (size_t i = 0; i < filaments.size(); i++) {
+        const Filament& filament = filaments[i];
+
+        double risk = moistureRiskPercent(filament);
+
+        cout << "\n" << i + 1 << ". " << filament.name << '\n';
+        cout << "   Type: " << filament.type << '\n';
+        cout << "   Remaining weight: " << filament.weight << " g\n";
+        cout << "   Date opened: " << filament.dateOpened << '\n';
+        cout << "   Moisture risk: " << riskLabel(risk);
+
+        if (risk >= 0) {
+            cout << " (" << risk << "%)";
+        }
+
+        cout << '\n';
+
+        if (risk >= 100) {
+            cout << "   WARNING: Drying is recommended\n";
+        }
     }
 
     return true;
 }
 
-void displayFilamentDetails(vector<Filament>& filaments) {
+bool selectFilament(const vector<Filament>& filaments, int& index) {
     if (!displayFilaments(filaments)) {
-        return;
+        return false;
     }
 
-    int choice = intInput("Enter the filament number: ");
+    int choice = intInput("\nEnter the filament number: ");
 
-    if (choice < 1 || choice > filaments.size()) {
+    if (choice < 1 || choice > static_cast<int>(filaments.size())) {
         cout << "Invalid selection.\n";
-        return;
+        return false;
     }
 
-    Filament& filament = filaments[choice - 1];
-
-    cout << "\n--- FILAMENT DETAILS ---\n";
-    cout << "Name: " << filament.name << endl;
-    cout << "Type: " << filament.type << endl;
-    cout << "Remaining weight: " << filament.weight << " g\n";
-    cout << "Date opened: " << filament.dateOpened << endl;
-    cout << "Number of printing events: " << filament.events.size() << endl;
-
-    double totalExposure = 0;
-
-    for (int i = 0; i < filament.events.size(); i++) {
-        totalExposure = totalExposure + filament.events[i].exposure;
-    }
-
-    cout << "Total exposure: " << totalExposure << endl;
-
-    for (int i = 0; i < filament.events.size(); i++) {
-        cout << "\nEvent " << i + 1 << endl;
-        cout << "Date/time: " << filament.events[i].dateTime << endl;
-        cout << "Printing hours: " << filament.events[i].printingHours << endl;
-        cout << "Relative humidity: " << filament.events[i].relativeHumidity << "%\n";
-        cout << "Grams used: " << filament.events[i].gramsUsed << " g\n";
-        cout << "Exposure: " << filament.events[i].exposure << endl;
-    }
+    index = choice - 1;
+    return true;
 }
 
-// Filament Inventory Manager
+void displayFilamentDetails(const vector<Filament>& filaments) {
+    int index;
+
+    if (!selectFilament(filaments, index)) {
+        return;
+    }
+    const Filament& filament = filaments[index];
+
+    cout << "\n----> FILAMENT DETAILS\n";
+    cout << "Name: " << filament.name << '\n';
+    cout << "Type: " << filament.type << '\n';
+    cout << "Remaining weight: " << filament.weight << " g\n";
+    cout << "Date opened: " << filament.dateOpened << '\n';
+    cout << "Printing events: " << filament.events.size() << '\n';
+    cout << "Total humidity-weighted exposure: "
+         << totalExposure(filament) << '\n';
+    cout << "Estimated risk interval: "
+         << getRiskThresholdDays(filament.type) << " days\n";
+
+    displayRiskWarning(filament);
+
+    for (size_t i = 0; i < filament.events.size(); i++) {
+        const PrintingEvent& event = filament.events[i];
+
+        cout << "\n--- Printing Event " << i + 1 << " ---\n";
+        cout << "Date/time: " << event.dateTime << '\n';
+        cout << "Printing hours: " << event.printingHours << '\n';
+        cout << "Relative humidity: "
+             << event.relativeHumidity << "%\n";
+        cout << "Grams used: " << event.gramsUsed << " g\n";
+        cout << "Exposure score: " << event.exposure << '\n';
+    }
+}
 
 void addFilament(vector<Filament>& filaments) {
     Filament filament;
 
-    cout << "\n--- ADD FILAMENT ---\n";
+    cout << "\n----> ADD FILAMENT \n";
 
-    cout << "Enter filament name: ";
-    getline(cin, filament.name);
+    filament.name = strInput("Enter filament name/brand: ");
 
-    cout << "Enter filament type: ";
-    getline(cin, filament.type);
-
-    filament.weight = doubleInput("Enter filament weight in grams: ");
-
-    cout << "Current date/time: " << getCurrentDateTime() << endl;
-    cout << "Enter date/time opened, or press ENTER to use current date/time: ";
-    getline(cin, filament.dateOpened);
-
-    if (filament.dateOpened == "") {
-        filament.dateOpened = getCurrentDateTime();
+    if (filament.name.empty()) {
+        cout << "Name cannot be empty.\n";
+        return;
     }
 
-    filament.events.clear();
+    cout << "Supported types: PLA, PETG, TPU\n";
+
+    filament.type = strInput("Enter filament type: ");
+
+    if (filament.type.empty()) {
+        cout << "Type cannot be empty.\n";
+        return;
+    }
+
+    filament.weight = doubleInput("Enter current filament weight in grams: ");
+
+    cout << "Current date: " << getCurrentDate() << '\n';
+
+    filament.dateOpened = strInput(
+        "Enter date opened (YYYY-MM-DD), or press ENTER for today: "
+    );
+
+    if (filament.dateOpened.empty()) {
+        filament.dateOpened = getCurrentDate();
+    } else {
+        tm test = {};
+
+        if (!parseDate(filament.dateOpened, test)) {
+            cout << "Invalid date. Use YYYY-MM-DD and enter a valid date\n";
+            cout << "Filament was not added\n";
+            return;
+        }
+
+        time_t openedTime = mktime(&test);
+        time_t nowTime = time(0);
+
+        if (openedTime == static_cast<time_t>(-1) ||
+            openedTime > nowTime) {
+            cout << "Opening date cannot be in the future\n";
+            cout << "Filament was not added.\n";
+            return;
+        }
+    }
+
     filaments.push_back(filament);
 
     if (saveData(filaments)) {
-        cout << "Filament added and saved.\n";
+        cout << "Filament added and saved successfully\n";
     }
 }
 
 void removeFilament(vector<Filament>& filaments) {
-    if (!displayFilaments(filaments)) {
+    int index;
+
+    if (!selectFilament(filaments, index)) {
         return;
     }
 
-    int choice = intInput("Select the filament number: ");
-
-    if (choice < 1 || choice > filaments.size()) {
-        cout << "Invalid selection.\n";
-        return;
-    }
-
-    int index = choice - 1;
-    double amount = doubleInput("Enter the amount to remove in grams: ");
+    double amount = doubleInput(
+        "Enter grams to remove from inventory: "
+    );
 
     if (amount > filaments[index].weight) {
-        cout << "You cannot remove more than the remaining weight.\n";
+        cout << "You cannot remove more than the remaining weight\n";
         return;
     }
 
-    filaments[index].weight = filaments[index].weight - amount;
+    filaments[index].weight -= amount;
 
-    if (filaments[index].weight <= 0) {
-        cout << "The filament has been fully used and will be removed.\n";
+    if (filaments[index].weight <= 0.000001) {
+        cout << "Filament fully used; removing it from inventory\n";
         filaments.erase(filaments.begin() + index);
     } else {
-        cout << "Remaining weight: " << filaments[index].weight << " g\n";
+        cout << "Remaining weight: "
+             << filaments[index].weight << " g\n";
     }
 
     if (saveData(filaments)) {
-        cout << "Inventory saved.\n";
+        cout << "Inventory saved\n";
     }
 }
 
-// Printing Events
-
 void addPrintingEvent(vector<Filament>& filaments) {
-    if (!displayFilaments(filaments)) {
+    int index;
+
+    if (!selectFilament(filaments, index)) {
         return;
     }
 
-    int choice = intInput("Select the filament number: ");
+    PrintingEvent event;
 
-    if (choice < 1 || choice > filaments.size()) {
-        cout << "Invalid selection.\n";
-        return;
-    }
+    cout << "\n----> ADD PRINTING JOB \n";
 
-    int index = choice - 1;
-    printingEvent event;
+    event.printingHours = doubleInput(
+        "Enter printing/exposure hours: "
+    );
 
-    cout << "\n--- ADD PRINTING EVENT ---\n";
+    while (true) {
+        event.relativeHumidity = doubleInput(
+            "Enter relative humidity (0-100%): "
+        );
 
-    event.printingHours = doubleInput("Enter printing hours: ");
-    event.relativeHumidity = doubleInput("Enter relative humidity (0-100): ");
+        if (event.relativeHumidity <= 100) {
+            break;
+        }
 
-    if (event.relativeHumidity > 100) {
         cout << "Relative humidity must be between 0 and 100.\n";
-        return;
     }
 
     event.gramsUsed = doubleInput("Enter grams used: ");
 
     if (event.gramsUsed > filaments[index].weight) {
-        cout << "Grams used cannot exceed the remaining filament weight.\n";
+        cout << "Grams used cannot exceed remaining filament weight\nInput Cancelled\n";
         return;
     }
 
-    cout << "Current date/time: " << getCurrentDateTime() << endl;
-    cout << "Enter event date/time, or press ENTER to use current date/time: ";
-    getline(cin, event.dateTime);
+    event.dateTime = strInput(
+        "Enter event date/time, or press ENTER for now: "
+    );
 
-    if (event.dateTime == "") {
+    if (event.dateTime.empty()) {
         event.dateTime = getCurrentDateTime();
     }
 
@@ -350,105 +646,136 @@ void addPrintingEvent(vector<Filament>& filaments) {
     );
 
     filaments[index].events.push_back(event);
-    filaments[index].weight = filaments[index].weight - event.gramsUsed;
+    filaments[index].weight -= event.gramsUsed;
 
-    cout << "\nEvent exposure: " << event.exposure << endl;
+    cout << "\nEvent recorded successfully.\n";
+    cout << "Exposure prediction: " << event.exposure << '\n';
     cout << "Remaining weight: " << filaments[index].weight << " g\n";
 
-    if (filaments[index].weight <= 0) {
-        cout << "The filament has been fully used and will be removed.\n";
+    displayRiskWarning(filaments[index]);
+
+    if (filaments[index].weight <= 0.000001) {
+        cout << "Filament fully used\n will be automatically removed\n";
         filaments.erase(filaments.begin() + index);
     }
-
     if (saveData(filaments)) {
-        cout << "Printing event and inventory saved.\n";
+        cout << "Printing event and inventory saved\n";
     }
 }
 
-void displayPrintingHistory(vector<Filament>& filaments) {
-    bool foundEvent = false;
+void displayPrintingHistory(const vector<Filament>& filaments) {
+    bool found = false;
 
-    for (int i = 0; i < filaments.size(); i++) {
-        if (filaments[i].events.size() > 0) {
-            foundEvent = true;
+    cout << "\n===== PRINTING HISTORY =====\n";
 
-            cout << "\nFilament: " << filaments[i].name << endl;
+    for (size_t i = 0; i < filaments.size(); i++) {
+        const Filament& filament = filaments[i];
 
-            for (int j = 0; j < filaments[i].events.size(); j++) {
-                cout << "\nEvent " << j + 1 << endl;
-                cout << "Date/time: " << filaments[i].events[j].dateTime << endl;
-                cout << "Printing hours: " << filaments[i].events[j].printingHours << endl;
-                cout << "Relative humidity: " << filaments[i].events[j].relativeHumidity << "%\n";
-                cout << "Grams used: " << filaments[i].events[j].gramsUsed << " g\n";
-                cout << "Exposure: " << filaments[i].events[j].exposure << endl;
-            }
+        if (filament.events.empty()) {
+            continue;
+        }
+
+        found = true;
+
+        cout << "\nFilament: " << filament.name
+             << " (" << filament.type << ")\n";
+
+        for (size_t j = 0; j < filament.events.size(); j++) {
+            const PrintingEvent& event = filament.events[j];
+
+            cout << "\nEvent " << j + 1 << '\n';
+            cout << "Date/time: " << event.dateTime << '\n';
+            cout << "Printing hours: " << event.printingHours << '\n';
+            cout << "Relative humidity: "
+                 << event.relativeHumidity << "%\n";
+            cout << "Grams used: " << event.gramsUsed << " g\n";
+            cout << "Exposure score: " << event.exposure << '\n';
         }
     }
 
-    if (!foundEvent) {
-        cout << "\nNo printing events have been recorded.\n";
+    if (!found) {
+        cout << "No printing events have been recorded\n";
     }
 }
 
-// Menu and Main
+//menu part
 
 void showMenu() {
     cout << "\n===== 3D FILAMENT MOISTURE TRACKER =====\n";
-    cout << "1. Add / Remove Filament\n";
-    cout << "2. Add Printing Event\n";
-    cout << "3. Display Filaments\n";
-    cout << "4. Display Filament Details\n";
-    cout << "5. Display Printing History\n";
-    cout << "6. Finish\n";
+    cout << "1. Add filament\n";
+    cout << "2. Remove grams or used filament\n";
+    cout << "3. Add printing event\n";
+    cout << "4. Display inventory and moisture risk estimates\n";
+    cout << "5. Display filament details\n";
+    cout << "6. Display printing history\n";
+    cout << "7. Save and finish\n";
 }
+
+// Main Program
 
 int main() {
     vector<Filament> filaments;
 
-    cout << "Current date/time: " << getCurrentDateTime() << endl;
+    cout << "Current date/time: " << getCurrentDateTime() << '\n';
 
     if (!loadData(filaments)) {
-        cout << "Unable to load inventory. Program ended.\n";
+        cerr << "Unable to load inventory\n";
         return 1;
+    }
+
+    if (!filaments.empty()) {
+        cout << "\n===== MOISTURE-RISK CHECK =====\n";
+
+        for (size_t i = 0; i < filaments.size(); i++) {
+            cout << "\n" << filaments[i].name
+                 << " (" << filaments[i].type << ")\n";
+
+            displayRiskWarning(filaments[i]);
+        }
     }
 
     int choice = 0;
 
-    while (choice != 6) {
+    while (choice != 7) {
         showMenu();
+
         choice = intInput("Enter your choice: ");
 
-        if (choice == 1) {
-            int subChoice;
-
-            cout << "\n1. Add Filament\n";
-            cout << "2. Remove Used Filament\n";
-            cout << "3. Return to Main Menu\n";
-
-            subChoice = intInput("Enter your choice: ");
-
-            if (subChoice == 1) {
+        switch (choice) {
+            case 1:
                 addFilament(filaments);
-            } else if (subChoice == 2) {
+                break;
+
+            case 2:
                 removeFilament(filaments);
-            } else if (subChoice != 3) {
-                cout << "Invalid choice.\n";
-            }
-        } else if (choice == 2) {
-            addPrintingEvent(filaments);
-        } else if (choice == 3) {
-            displayFilaments(filaments);
-        } else if (choice == 4) {
-            displayFilamentDetails(filaments);
-        } else if (choice == 5) {
-            displayPrintingHistory(filaments);
-        } else if (choice == 6) {
-            if (saveData(filaments)) {
-                cout << "Inventory saved.\n";
-            }
-            cout << "Thank you for using the tracker.\n";
-        } else {
-            cout << "Invalid choice. Please select 1-6.\n";
+                break;
+
+            case 3:
+                addPrintingEvent(filaments);
+                break;
+
+            case 4:
+                displayFilaments(filaments);
+                break;
+
+            case 5:
+                displayFilamentDetails(filaments);
+                break;
+
+            case 6:
+                displayPrintingHistory(filaments);
+                break;
+
+            case 7:
+                if (saveData(filaments)) {
+                    cout << "Inventory saved.\n";
+                }
+
+                cout << "Thank you for using the tracker.\n";
+                break;
+
+            default:
+                cout << "Invalid choice. Please select 1-7.\n";
         }
     }
 
